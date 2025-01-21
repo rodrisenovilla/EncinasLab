@@ -1,2 +1,2 @@
 # EncinasLab
-This is the repository for Encina's lab code.
+This is the repository for Encinas' lab code.
