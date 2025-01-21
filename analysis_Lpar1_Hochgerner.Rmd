@@ -1,0 +1,279 @@
+---
+title: "Lpar1 scRNA-seq dentate gyrus"
+author: "Rodrigo Senovilla Ganzo"
+date: "20/7/20"
+output: Encinas_Lab
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(SeuratObject)
+library(dplyr)
+library(Seurat)
+library(SeuratObject)
+library(patchwork)
+library(Matrix)
+library(glmGamPoi)
+library(sctransform)
+library(limma)
+library(clustree)
+library(plyr)
+library(readxl)
+library(rtracklayer)
+library(biomaRt)
+library(stringr)
+```
+
+## Dataset Original
+
+```{r}
+dsc.data<-read.table('mouse/GSE104323_10X_expression_data_V2.tab')
+rownames(dsc.data)<-dsc.data$V1
+colnames(dsc.data)<-dsc.data[1,]
+dsc.data$cellid<-NULL
+dsc.data<-dsc.data[-1,]
+dsc.data1<-apply(dsc.data, MARGIN = 2, FUN = as.numeric)
+rownames(dsc.data1)<-rownames(dsc.data)
+dsc.data1<-Matrix(dsc.data1, sparse = T)
+dsc <- CreateSeuratObject(counts = dsc.data1, project = "dsc", min.cells = 3, min.features = 200)
+```
+
+
+```{r}
+dsc.metadata<-read.table('mouse/GSE104323_metadata_barcodes_24185cells.txt', sep = "\t", header = T)
+dsc.metadata<-dsc.metadata[dsc.metadata[,1] %in% colnames(dsc),]
+rownames(dsc.metadata)<-dsc.metadata[,1]
+dsc.metadata$Sample.name..24185.single.cells.<-NULL
+dsc <- AddMetaData(dsc, dsc.metadata)
+```
+
+##Quality Control
+
+```{r, echo=F}
+dsc[["percent.mt"]] <- PercentageFeatureSet(dsc, pattern = "^Mt-")
+VlnPlot(dsc, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), pt.size = 0)
+plot1 <- FeatureScatter(dsc, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(dsc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+```
+
+## Eliminate Low Quality Cells
+
+```{r}
+dsc <- subset(dsc, subset = nFeature_RNA > 800 & nFeature_RNA < 7000 & percent.mt < 5)
+```
+
+```{r, echo=F}
+VlnPlot(dsc, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), pt.size = 0)
+plot1 <- FeatureScatter(dsc, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(dsc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+```
+
+
+# Proccessing with default parameters
+
+
+```{r , echo=FALSE}
+dsc <- SCTransform(dsc)
+dsc <- RunPCA(dsc, npcs = 50, verbose = FALSE)
+dsc <- FindNeighbors(dsc, dims = 1:50)
+dsc <- FindClusters(dsc, resolution = c(0.5,2, 2.5, 3))
+dsc <- RunUMAP(dsc, dims = 1:50)
+```
+
+# Visualization of stored meta.data
+
+```{r}
+DimPlot(dsc, group.by="SCT_snn_res.0.5", label = T)+NoLegend()
+DimPlot(dsc, group.by="characteristics..age", label = F)
+DimPlot(dsc, group.by="characteristics..cell.cluster", label = T)+NoLegend()
+```
+
+#Premilinary expression of general markers
+
+```{r}
+FeaturePlot(dsc, features = "Lpar1")
+FeaturePlot(dsc, features = "Vim")
+FeaturePlot(dsc, features = "Neurod1")
+
+# Visualize co-expression of two features simultaneously
+FeaturePlot(dsc, features = c("LPAR1", "VIM"), blend = TRUE)+DarkTheme()
+```
+
+
+#Control Point of Whole Hippocampus
+
+```{r , echo=FALSE}
+#saveRDS(dsc, file = "./dscf.rds")
+```
+
+
+## Subset of only astrocytes or radial glia (RGL) independently of the stage
+
+
+```{r , echo=FALSE}
+Idents(dsc)<-"characteristics..cell.cluster"
+DimPlot(dsc, label=T)
+dsc_2 <- subset(dsc, idents = c("RGL", "Astro-adult", "Astro-juv", "RGL_young", "Immature-Astro"), invert = F)
+DimPlot(dsc_2, label=T)
+```
+
+# Reproccessing
+
+
+```{r , echo=FALSE}
+DefaultAssay(dsc_2)<-"RNA"
+dsc_2 <- SCTransform(dsc_2)
+dsc_2 <- RunPCA(dsc_2, npcs = 50, verbose = FALSE)
+dsc_2 <- FindNeighbors(dsc_2, dims = 1:50)
+dsc_2 <- FindClusters(dsc_2, resolution = c(0.1,0.2, 0.3,0.4,0.5))
+dsc_2 <- RunUMAP(dsc_2, dims = 1:50)
+```
+
+# Visualization by stage
+
+```{r , echo=FALSE}
+pdf("umap_ages_mouse.pdf", width = 8.3, height = 5.6)
+DimPlot(dsc_2, group.by = "characteristics..age", label=T)+ggtitle("Ages")
+dev.off()
+DimPlot(dsc_2, group.by = "characteristics..age", label=T)+ggtitle("Ages")
+```
+
+# Phase Calculation based on Cell Cycle markers
+
+```{r}
+library(readr)
+cc.fer <- read_delim("/media/phylobrain/Windows/Users/rodri/Documents/Single_cell_phylobrain/Cellcycle/fer_rsg_genes.csv", 
+    ";", escape_double = FALSE, trim_ws = TRUE)
+s.genes <- unique(str_to_title(c(cc.genes$s.genes,cc.fer$`Phase S`)))
+g2m.genes <- unique(str_to_title(c(cc.genes$g2m.genes,cc.fer$`Phase G2M`)))
+dsc_2 <- CellCycleScoring(dsc_2, s.features = s.genes, g2m.features = g2m.genes, set.ident = TRUE)
+```
+
+# Visualization of Phase
+
+```{r , echo=FALSE}
+pdf("umap_cc_mouse.pdf", width = 8.3, height = 5.6)
+DimPlot(dsc_2, group.by = "Phase", label=F)+ggtitle("Phase")
+dev.off()
+DimPlot(dsc_2, group.by = "Phase", label=F)+ggtitle("Phase")
+```
+
+
+## Visualization by cell types
+
+
+```{r , echo=FALSE}
+pdf("umap_celltypes_mouse.pdf", width = 8.3, height = 5.6)
+DimPlot(dsc_2, group.by = "characteristics..cell.cluster", label=F)+ggtitle("Astrocytes and Radial Glia Cells Types")+scale_color_manual(values = c("firebrick4", "firebrick1","indianred1","dark green","forestgreen"))
+dev.off()
+DimPlot(dsc_2, group.by = "characteristics..cell.cluster", label=F)+ggtitle("Astrocytes and Radial Glia Cells Types")+scale_color_manual(values = c("firebrick4", "firebrick1","indianred1","dark green","forestgreen"))
+```
+
+# Lpar1 Gene Expression
+
+```{r , echo=FALSE}
+pdf("umap_Lpar1_mouse_green.pdf", width = 8.3, height = 5.6)
+DefaultAssay(dsc_2)<-"SCT"
+FeaturePlot(dsc_2, "Lpar1")+scale_color_gradient(low = "grey85", high = "dark green")
+dev.off()
+FeaturePlot(dsc_2, "Lpar1")+scale_color_gradient(low = "grey85", high = "dark green")
+```
+
+# Lpar1 Violin visualization
+
+```{r , echo=FALSE}
+pdf("violin_Lpar1_mouse.pdf")
+Idents(dsc_2)<-"characteristics..cell.cluster"
+DefaultAssay(dsc_2)<-"SCT"
+VlnPlot(dsc_2, "Lpar1")
+dev.off()
+VlnPlot(dsc_2, "Lpar1")
+```
+
+# Aqp4 Gene Expression
+
+
+```{r , echo=FALSE}
+pdf("umap_Aqp4_mouse.pdf", width = 8.3, height = 5.6)
+DefaultAssay(dsc_2)<-"SCT"
+FeaturePlot(dsc_2, "Aqp4")
+dev.off()
+FeaturePlot(dsc_2, "Aqp4")
+```
+
+# Gja1 Gene Expression
+
+
+```{r , echo=FALSE}
+pdf("umap_Gja1_mouse.pdf", width = 8.3, height = 5.6)
+DefaultAssay(dsc_2)<-"SCT"
+FeaturePlot(dsc_2, "Gja1")
+dev.off()
+FeaturePlot(dsc_2, "Gja1")
+```
+
+# Sox2 Gene Expression
+
+
+```{r , echo=FALSE}
+pdf("umap_Sox2_mouse.pdf", width = 8.3, height = 5.6)
+DefaultAssay(dsc_2)<-"SCT"
+FeaturePlot(dsc_2, "Sox2")
+dev.off()
+FeaturePlot(dsc_2, "Sox2")
+```
+
+# Vim Gene Expression
+
+
+```{r , echo=FALSE}
+pdf("umap_Vim_mouse.pdf", width = 8.3, height = 5.6)
+DefaultAssay(dsc_2)<-"SCT"
+FeaturePlot(dsc_2, "Vim")
+dev.off()
+FeaturePlot(dsc_2, "Vim")
+```
+
+# Gfap Gene Expression
+
+
+```{r , echo=FALSE}
+pdf("umap_Gfap_mouse.pdf", width = 8.3, height = 5.6)
+DefaultAssay(dsc_2)<-"SCT"
+FeaturePlot(dsc_2, "Gfap")
+dev.off()
+FeaturePlot(dsc_2, "Gfap")
+```
+
+# Nestin Gene Expression
+
+
+```{r , echo=FALSE}
+pdf("umap_Nes_mouse.pdf", width = 8.3, height = 5.6)
+DefaultAssay(dsc_2)<-"SCT"
+FeaturePlot(dsc_2, "Nes")
+dev.off()
+FeaturePlot(dsc_2, "Nes")
+```
+
+# S100B Gene Expression
+
+
+```{r , echo=FALSE}
+pdf("umap_S100b_mouse.pdf", width = 8.3, height = 5.6)
+DefaultAssay(dsc_2)<-"SCT"
+FeaturePlot(dsc_2, "S100b")
+dev.off()
+FeaturePlot(dsc_2, "S100b")
+```
+
+#Check point
+
+```{r}
+#saveRDS(dsc_2, "dsc_juvenile.rds")
+```
