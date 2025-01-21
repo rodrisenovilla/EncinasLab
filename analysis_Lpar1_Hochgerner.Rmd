@@ -147,7 +147,7 @@ DimPlot(dsc_2, group.by = "characteristics..age", label=T)+ggtitle("Ages")
 
 ```{r}
 library(readr)
-cc.fer <- read_delim("/media/phylobrain/Windows/Users/rodri/Documents/Single_cell_phylobrain/Cellcycle/fer_rsg_genes.csv", 
+cc.fer <- read_delim("cellcycle_genes.csv", 
     ";", escape_double = FALSE, trim_ws = TRUE)
 s.genes <- unique(str_to_title(c(cc.genes$s.genes,cc.fer$`Phase S`)))
 g2m.genes <- unique(str_to_title(c(cc.genes$g2m.genes,cc.fer$`Phase G2M`)))
